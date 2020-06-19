@@ -38,32 +38,30 @@ else
     exit
 fi
 
+declare -a POSITIONAL
+
 for i in "$@"
 do
 case ${i} in
     i|install)
     INSTALL_MODE=1
-    FLAGS=""
     shift
     ;;
     r|remove)
     UNINSTALL_MODE=1
-    FLAGS="-D"
+    REMOVE=1
     shift
     ;;
     c|create)
     CREATE_MODE=1
-    FLAGS=""
     shift
     ;;
     a|add)
     ADD_MODE=1
-    FLAGS=""
     shift
     ;;
     l|list)
     LIST_MODE=1
-    FLAGS=""
     shift
     ;;
     -h|--help)
@@ -102,15 +100,24 @@ function stow_package {
     STOW_DIR=$1
     TARGET_DIR=$2
     PACKAGE_NAME=$3
+    _FORCE=$4
+    _REMOVE=$5 # set or not set
+    if [ -n "$_REMOVE" ];
+    then
+        FLAGS="-D"
+    fi
     CMD="stow $FLAGS -d $STOW_DIR -t $TARGET_DIR $PACKAGE_NAME"
     # if not dry run and does not start with a '_' (unless its forced)
-    if [[ $PACKAGE_NAME != _* || -n "$FORCE" ]]
+    if [[ $PACKAGE_NAME != _* || -n "$_FORCE" ]]
     then
+        if [ -n "$REMOVE" ];
+        then
+            echo "Unstowing $PACKAGE_NAME"
+        else
+            echo "Stowing $PACKAGE_NAME"
+        fi
         if [[ -z "$DRYRUN" ]]
         then
-            # TODO  make this more verbose as we should be able to distinguish here
-            #       if something is actually being stowed/unstoed i.e. installed/remove
-            echo "Un-/Stowing $PACKAGE_NAME"
             $($CMD)
             if [ $? -eq 0 ]
             then
@@ -140,12 +147,38 @@ AVAILABLE_PACKAGES=($SCRIPTPATH/*/)
 
 [ -n "$VERBOSE" ] && echo "[v] Scriptpath '$SCRIPTPATH'"
 
+# list package(s)
 if [ -n "$LIST_MODE" ];
 then
-    for PACKAGE in "${AVAILABLE_PACKAGES[@]}"
-    do
-        echo "$(basename $PACKAGE)"
-    done
+    # if no package is given (just list all packages)
+    if [ "${#POSITIONAL[@]}" = "0" ];
+    then
+        for PACKAGE in "${AVAILABLE_PACKAGES[@]}"
+        do
+            echo "$(basename $PACKAGE)"
+        done
+    else # if some packages are given, iterate over them and list all contained files
+        echo "POS: $POSITIONAL[@]"
+        for PACKAGE in "${POSITIONAL[@]}"
+        do
+            PACKAGEPATH="$SCRIPTPATH/$PACKAGE"
+            if [ -d "$PACKAGEPATH" ]
+            then
+                echo "[package] $PACKAGE"
+                declare -a files
+                files=$( find $PACKAGEPATH -type f )
+                for f in $files ;
+                do
+                    relfile=${f//$PACKAGEPATH/}
+                    echo "├─ [file] $relfile"
+                    # TODO check for last element and print echo "└─ $f"
+                    #     Unfortunately there is not way to get paths recursively and length of array simu.
+                done
+            else
+                echo "Package $PACKAGE not found. Skipping"
+            fi
+        done
+    fi
 elif [[ -n "$INSTALL_MODE" || -n "$UNINSTALL_MODE" ]];
 then
     if [ -n "$ALL" ];
@@ -155,15 +188,15 @@ then
         for d in "${AVAILABLE_PACKAGES[@]}"
         do
             [ -n "$VERBOSE" ] && echo "[v] ${OPERATION_STRING}ing '$d'"
-            stow_package $(dirname $d) "$HOME" $(basename $d)
+            stow_package $(dirname $d) "$HOME" $(basename $d) "$FORCE" "$REMOVE"
         done
     else
-        for package in $POSITIONAL
+        for package in "${POSITIONAL[@]}"
         do
             PACKAGE_DIR="$SCRIPTPATH/$package"
             if [ -d $PACKAGE_DIR ]
             then
-                stow_package $SCRIPTPATH "$HOME" $package
+                stow_package $SCRIPTPATH "$HOME" $package "$FORCE" "$REMOVE"
             else
                 echo "Unknown package $package"
             fi
@@ -190,14 +223,13 @@ then
                 then
                     echo "File $f is a directory. Skipping."
                 else
-                    echo "rp of f rel: $(realpath --relative-to=$HOME $f)"
                     DESTINATION="$PACKAGE_DIR/$(realpath --relative-to=$HOME $f)"
                     if [ -f "$DESTINATION" ]
                     then
                         echo "File $f already exists in package $PACKAGE. Skipping."
                     else
                         echo "Adding $f to $PACKAGE ..."
-                        echo "Providing folder structure $(dirname $DESTINATION)"
+                        [ -n "$VERBOSE" ] && echo "[v] Providing folder structure $(dirname $DESTINATION)"
                         mkdir -p "$(dirname $DESTINATION)"
                         if [ -d "$(dirname $DESTINATION)" ];
                         then
@@ -205,9 +237,8 @@ then
                             mv "$(realpath $f)" "$DESTINATION"
                             if [ -f "$DESTINATION" ]
                             then
-                                [ -n "$VERBOSE" ] && echo "[v] Re-Stowing package $PACKAGE"
-                                # TODO This may not work properly if adding something to private packages
-                                if ! stow_package "$(dirname $PACKAGE_DIR)" "$HOME" "$(basename $PACKAGE_DIR)";
+                                [ -n "$VERBOSE" ] && echo "Re-Stowing package $PACKAGE"
+                                if ! stow_package "$(dirname $PACKAGE_DIR)" "$HOME" "$(basename $PACKAGE_DIR "1")" "FORCE";
                                 then
                                     echo "ERROR: Re-Stowing package unsuccessful."
                                     echo "Reverting file"
@@ -236,13 +267,12 @@ then
     for PACKAGE in "${POSITIONAL[@]}"
     do
         PACKAGE_DIR="$SCRIPTPATH/$PACKAGE"
-        echo "$PACKAGE_DIR"
         if [ -d $PACKAGE_DIR ]
         then
             echo "Package $PACKAGE already exists. Skipping."
         else
             echo "Creating package $PACKAGE ..."
-            mkdir $PACKAGE_DIR
+            mkdir $PACKAGE_DIR && echo "Done"
         fi
     done
 fi

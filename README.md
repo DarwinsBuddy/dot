@@ -1,13 +1,15 @@
 
 # dot
 A simple bash script for managing my dotfiles with stow
+
 ## Dependencies
 `stow`
 
 ## Usage
 ###  Commands
 #### Listing packages
-* `dot l | list` **List all available packages** for installing into your environment
+* `dot l | list` **List all available packages** for installing into your environment if no packages are given
+* `dot l | list <package1> <package2> <...>` **Lists contained files of all given packages**
 * `dot i | install [-a|--all] [-f | --force] <package1> <package2> <...>` **Install provided packages** from your dotfiles repository into `$HOME`. When given `-a`or `--all` installs all available packages from `$HOME` (except packages which start with `_`, see: _Device specific packages_). When given `-f | --force` force install of _Device specific packages_
 * `dot r | remove [-a|--all] [-f | --force] <package1> <package2> <...>` **Remove provided packages** from your `$HOME`repository (Note: your config files in your dotfiles repository won't be touched. It's a fancy alias for un-stowing). When given `-a`or `--all` remove all available packages from `$HOME` (except packages which start with `_`, see: _Device specific packages_). When given `-f | --force` force remove of _Device specific packages_
 * `dot c | create <package_name>` **Create a package** with name `<package_name>` if it doesn't yet exist (Will not overwrite existing packages) (See _Device specific packages_ for special use cases)
