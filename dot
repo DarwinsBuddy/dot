@@ -128,7 +128,7 @@ function stow_package {
 
 }
 
-if [ -n "$INSTALL_MODE"];
+if [ -n "$INSTALL_MODE" ];
 then
     OPERATION_STRING="Install"
 else
@@ -205,7 +205,8 @@ then
                             mv "$(realpath $f)" "$DESTINATION"
                             if [ -f "$DESTINATION" ]
                             then
-                                [ -n "$VERBOSE" ] && echo "Re-Stowing package $PACKAGE"
+                                [ -n "$VERBOSE" ] && echo "[v] Re-Stowing package $PACKAGE"
+                                # TODO This may not work properly if adding something to private packages
                                 if ! stow_package "$(dirname $PACKAGE_DIR)" "$HOME" "$(basename $PACKAGE_DIR)";
                                 then
                                     echo "ERROR: Re-Stowing package unsuccessful."
