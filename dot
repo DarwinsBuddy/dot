@@ -1,0 +1,248 @@
+#!/bin/bash
+
+# yay -S stow
+bold=$(tput bold)
+normal=$(tput sgr0)
+
+function show_help {
+    echo "Usage: $(basename $0) [-h|--help] [-d|--dry-run] [-f|--force] [-v|--verbose]"
+    echo "${bold}COMMANDS${normal}"
+    echo "       l|list"
+    echo "       i|install [-a|--all] | <package1> <package2> <...>"
+    echo "       r|remove [-a|--all] | <package1> <package2> <...>"
+    echo "       c|create <package_name>"
+    echo "       a|add <package_name> <file1> <file2> <...>"
+    echo "${bold}OPTIONS${normal}"
+    echo "       -h |--help                                         Show this help message"
+    echo "       -d | --dry-run                                     Dry-Run"
+    echo "       -f | --FORCE                                       Force"
+    echo "       -v | --verbose                                     Verbose"
+}
+
+declare -A SUPPORTED_MODES
+for constant in install i remove r add a c create l list
+do
+    SUPPORTED_MODES[$constant]=1
+done
+
+# NO OR UNSUPPORTED MODE
+if [[ -n $1 ]]
+then
+    if [[ $1 != -* && -z ${SUPPORTED_MODES[$1]} ]]
+    then
+        echo "Unsupported Mode: $1 Exiting..."
+        exit 1
+    fi
+else
+    show_help
+    exit
+fi
+
+for i in "$@"
+do
+case ${i} in
+    i|install)
+    INSTALL_MODE=1
+    FLAGS=""
+    shift
+    ;;
+    r|remove)
+    UNINSTALL_MODE=1
+    FLAGS="-D"
+    shift
+    ;;
+    c|create)
+    CREATE_MODE=1
+    FLAGS=""
+    shift
+    ;;
+    a|add)
+    ADD_MODE=1
+    FLAGS=""
+    shift
+    ;;
+    l|list)
+    LIST_MODE=1
+    FLAGS=""
+    shift
+    ;;
+    -h|--help)
+    show_help
+    exit
+    ;;
+    -a|--all)
+    export ALL=1
+    shift
+    ;;
+    -d|--dry-run)
+    export DRYRUN=1
+    shift
+    ;;
+    -f|--force)
+    export FORCE=1
+    shift
+    ;;
+    -v|--verbose)
+    export VERBOSE=1
+    shift
+    ;;
+    #-f=*|--dump=*)
+    #export DUMP_FILE="${i#*=}"
+    #shift # past argument=value
+    #;;
+    *)
+    # unknown option
+    POSITIONAL+=("$1") # save it in an array for later
+    shift # past argument
+    ;;
+esac
+done
+
+function stow_package {
+    STOW_DIR=$1
+    TARGET_DIR=$2
+    PACKAGE_NAME=$3
+    CMD="stow $FLAGS -d $STOW_DIR -t $TARGET_DIR $PACKAGE_NAME"
+    # if not dry run and does not start with a '_' (unless its forced)
+    if [[ $PACKAGE_NAME != _* || -n "$FORCE" ]]
+    then
+        if [[ -z "$DRYRUN" ]]
+        then
+            # TODO  make this more verbose as we should be able to distinguish here
+            #       if something is actually being stowed/unstoed i.e. installed/remove
+            echo "Un-/Stowing $PACKAGE_NAME"
+            $($CMD)
+            if [ $? -eq 0 ]
+            then
+                echo "Done"
+            else
+                echo "Error - Package $PACKAGE_NAME skipped."
+            fi
+        else
+            echo "[DRY RUN] $CMD"
+        fi
+    else
+        [ -n "$VERBOSE" ] && echo "[v] Skipping package $PACKAGE_NAME intentionally"
+        [ -n "$VERBOSE" ] && echo "[v] If you want to install $PACKAGE_NAME anyway, use -f option"
+    fi
+
+}
+
+if [ -n "$INSTALL_MODE"];
+then
+    OPERATION_STRING="Install"
+else
+    OPERATION_STRING="Uninstall"
+fi
+
+SCRIPTPATH="$(dirname "$(realpath "$0")")"
+AVAILABLE_PACKAGES=($SCRIPTPATH/*/)
+
+[ -n "$VERBOSE" ] && echo "[v] Scriptpath '$SCRIPTPATH'"
+
+if [ -n "$LIST_MODE" ];
+then
+    for PACKAGE in "${AVAILABLE_PACKAGES[@]}"
+    do
+        echo "$(basename $PACKAGE)"
+    done
+elif [[ -n "$INSTALL_MODE" || -n "$UNINSTALL_MODE" ]];
+then
+    if [ -n "$ALL" ];
+    then
+        echo "${OPERATION_STRING}ing all packages available"
+        echo "---------------------------------"
+        for d in "${AVAILABLE_PACKAGES[@]}"
+        do
+            [ -n "$VERBOSE" ] && echo "[v] ${OPERATION_STRING}ing '$d'"
+            stow_package $(dirname $d) "$HOME" $(basename $d)
+        done
+    else
+        for package in $POSITIONAL
+        do
+            PACKAGE_DIR="$SCRIPTPATH/$package"
+            if [ -d $PACKAGE_DIR ]
+            then
+                stow_package $SCRIPTPATH "$HOME" $package
+            else
+                echo "Unknown package $package"
+            fi
+        done
+    fi     
+elif [ -n "$ADD_MODE" ];
+then
+    if [ "${#POSITIONAL[@]}" -ge 2 ];
+    then
+        PACKAGE="${POSITIONAL[0]}"
+        FILES=("${POSITIONAL[@]:1}")
+        PACKAGE_DIR="$SCRIPTPATH/$PACKAGE"
+        if [ -d "$PACKAGE_DIR" ]
+        then
+            for f in "${FILES[@]}"
+            do
+                if [ ! -f "$f" ]
+                then
+                    echo "File $f does not exist. Skipping."
+                elif [ -L "$f" ]
+                then
+                    echo "File $f is a symbol link. Skipping."
+                elif [ -d "$f" ]
+                then
+                    echo "File $f is a directory. Skipping."
+                else
+                    echo "rp of f rel: $(realpath --relative-to=$HOME $f)"
+                    DESTINATION="$PACKAGE_DIR/$(realpath --relative-to=$HOME $f)"
+                    if [ -f "$DESTINATION" ]
+                    then
+                        echo "File $f already exists in package $PACKAGE. Skipping."
+                    else
+                        echo "Adding $f to $PACKAGE ..."
+                        echo "Providing folder structure $(dirname $DESTINATION)"
+                        mkdir -p "$(dirname $DESTINATION)"
+                        if [ -d "$(dirname $DESTINATION)" ];
+                        then
+                            [ -n "$VERBOSE" ] && echo "Moving $(basename $f) into stow package $PACKAGE"
+                            mv "$(realpath $f)" "$DESTINATION"
+                            if [ -f "$DESTINATION" ]
+                            then
+                                [ -n "$VERBOSE" ] && echo "Re-Stowing package $PACKAGE"
+                                if ! stow_package "$(dirname $PACKAGE_DIR)" "$HOME" "$(basename $PACKAGE_DIR)";
+                                then
+                                    echo "ERROR: Re-Stowing package unsuccessful."
+                                    echo "Reverting file"
+                                    mv "$DESTINATION" "$(realpath $f)"
+                                fi                                
+                            else
+                                echo "Move was unsuccessful. Aborting ..."
+                                exit
+                            fi
+                        else
+                            echo "Couldn't create folder structure. Aborting ..."
+                            exit
+                        fi
+                    fi
+                fi  
+            done
+        else
+            echo "Unknown package $PACKAGE. Aborting."
+            exit
+        fi
+    else
+        echo "Too few arguments provided"
+    fi
+elif [ -n "$CREATE_MODE" ];
+then
+    for PACKAGE in "${POSITIONAL[@]}"
+    do
+        PACKAGE_DIR="$SCRIPTPATH/$PACKAGE"
+        echo "$PACKAGE_DIR"
+        if [ -d $PACKAGE_DIR ]
+        then
+            echo "Package $PACKAGE already exists. Skipping."
+        else
+            echo "Creating package $PACKAGE ..."
+            mkdir $PACKAGE_DIR
+        fi
+    done
+fi
+
